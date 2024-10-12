@@ -4,12 +4,144 @@ import pandas as pd
 import time
 from collections import defaultdict
 import re
+import json
 
-seasons = ["23/24", "22/23", "21/22", "20/21", "19/20","18/19","17/18","16/17","15/16"]
+seasons = ["23/24", "22/23", "21/22", "20/21", "19/20","18/19","17/18","16/17","15/16","14/15"]
 
 
 market_values = defaultdict(lambda: defaultdict(float))
+xgoalsbyseason = defaultdict(lambda: defaultdict(float))
+goalsbyseason = defaultdict(lambda: defaultdict(float))
 
+
+
+def scrap_goals(season,goalsbyseason):
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    url_base = "https://understat.com/league/EPL/"
+    last_year_url = url_base + last_year
+    response = requests.get(last_year_url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    # Buscar el script que contiene los datos JSON
+    script = soup.find('script', string=lambda t: t and 'datesData' in t)
+    json_data = None
+
+    if script:
+        # Extraer el contenido JSON
+        json_text = script.string
+        start_index = json_text.index('=') + 14
+        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
+        json_text = json_text[start_index:end_index].strip()  # Limpia el text
+        # Decodificar caracteres de escape hexadecimales
+        json_text = decode_hex_string(json_text)
+        try:
+            matches = json.loads(json_text)  # Convertir a objeto de Python
+        except json.JSONDecodeError as e:
+            print(f"Error al decodificar JSON: {e}")
+            return None
+
+        goalsbyseason[season] = {}
+
+        # Sumar xG para cada equipo
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            home_xg = float(match['goals']['h'])
+            away_xg = float(match['goals']['a'])
+
+            # Sumar para el equipo local
+            if home_team not in goalsbyseason[season]:
+                goalsbyseason[season][home_team] = []
+
+
+            if away_team not in goalsbyseason[season]:
+                goalsbyseason[season][away_team] = []
+
+            # Agregar los xG a la lista correspondiente
+            goalsbyseason[season][home_team].append(home_xg)
+            goalsbyseason[season][away_team].append(away_xg)
+        # Calcular los xG acumulados
+        if season in goalsbyseason:
+            for team, xg_list in goalsbyseason[season].items():
+                # Crear una lista acumulativa
+                accumulated_xg = []
+                total_xg = 0
+
+                for xg in xg_list:
+                    total_xg += xg
+                    accumulated_xg.append(total_xg)
+
+                # Reemplazar la lista original con la lista acumulada
+                goalsbyseason[season][team] = accumulated_xg
+    return goalsbyseason
+def decode_hex_string(hex_string):
+    # Decodifica los caracteres de escape hexadecimales
+    return bytes(hex_string, "utf-8").decode("unicode_escape")
+def scrap_xgoals(season,xg_by_season_club):
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    url_base = "https://understat.com/league/EPL/"
+    last_year_url = url_base + last_year
+    response = requests.get(last_year_url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    # Buscar el script que contiene los datos JSON
+    script = soup.find('script', string=lambda t: t and 'datesData' in t)
+    json_data = None
+
+    if script:
+        # Extraer el contenido JSON
+        json_text = script.string
+        start_index = json_text.index('=') + 14
+        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
+        json_text = json_text[start_index:end_index].strip()  # Limpia el text
+        # Decodificar caracteres de escape hexadecimales
+        json_text = decode_hex_string(json_text)
+        try:
+            matches = json.loads(json_text)  # Convertir a objeto de Python
+        except json.JSONDecodeError as e:
+            print(f"Error al decodificar JSON: {e}")
+            return None
+
+        xg_by_season_club[season] = {}
+
+        # Sumar xG para cada equipo
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            home_xg = float(match['xG']['h'])
+            away_xg = float(match['xG']['a'])
+
+            # Sumar para el equipo local
+            if home_team not in xg_by_season_club[season]:
+                xg_by_season_club[season][home_team] = []
+
+
+            if away_team not in xg_by_season_club[season]:
+                xg_by_season_club[season][away_team] = []
+
+            # Agregar los xG a la lista correspondiente
+            xg_by_season_club[season][home_team].append(home_xg)
+            xg_by_season_club[season][away_team].append(away_xg)
+        # Calcular los xG acumulados
+        if season in xg_by_season_club:
+            for team, xg_list in xg_by_season_club[season].items():
+                # Crear una lista acumulativa
+                accumulated_xg = []
+                total_xg = 0
+
+                for xg in xg_list:
+                    total_xg += xg
+                    accumulated_xg.append(total_xg)
+
+                # Reemplazar la lista original con la lista acumulada
+                xg_by_season_club[season][team] = accumulated_xg
+    return xg_by_season_club
 def scrap_matrix_results(season):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -91,6 +223,9 @@ def scrapp_season_teams_value(season,clubs):
     return market_values
 
 for season in seasons:
-    market_values = scrapp_season_teams_value(season=season,clubs=market_values)
-    print(market_values)
-    print(scrap_matrix_results(season=season))
+    # market_values = scrapp_season_teams_value(season=season,clubs=market_values)
+    # print(market_values)
+    # print(scrap_matrix_results(season=season))
+    #xgoalsbyseason = scrap_xgoals(season=season,xg_by_season_club=xgoalsbyseason)
+    goalsbyseason= scrap_goals(season=season, goalsbyseason=goalsbyseason)
+    print(goalsbyseason)
