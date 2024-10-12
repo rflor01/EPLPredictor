@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 from collections import defaultdict
+import re
 
 seasons = ["23/24", "22/23", "21/22", "20/21", "19/20","18/19","17/18","16/17","15/16"]
 
@@ -46,11 +47,13 @@ def scrap_matrix_results(season):
                 home_team = teams[i]  # Equipo de la fila actual
                 away_team = teams[j]  # Equipo de la columna correspondiente
                 result_text = result_span.get_text(strip=True)  # Resultado (por ejemplo, 3:2)
+                title_text = link.get('title')  # Obtiene algo como "19. Jornada, mar 26.12.2023"
+                match_day = re.search(r"\d+", title_text).group() if title_text else "Unknown"  # Extrae "19. Jornada"
 
-                # Guardar como "home_team_away_team" y el resultado
+                # Guardar como "home_team_away_team", resultado y jornada
                 results_vector.append(
-                    [f"{home_team.lower().replace(' ', '-')}_{away_team.lower().replace(' ', '-')}", result_text])
-
+                    [f"{home_team.lower().replace(' ', '-')}_{away_team.lower().replace(' ', '-')}", result_text,
+                     match_day])
     return results_vector
 
 def scrapp_season_teams_value(season,clubs):
@@ -88,5 +91,6 @@ def scrapp_season_teams_value(season,clubs):
     return market_values
 
 for season in seasons:
-    #market_values = scrapp_season_teams_value(season=season,clubs=market_values)
+    market_values = scrapp_season_teams_value(season=season,clubs=market_values)
+    print(market_values)
     print(scrap_matrix_results(season=season))
