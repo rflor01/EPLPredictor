@@ -5,15 +5,451 @@ import time
 from collections import defaultdict
 import re
 import json
+import numpy as np
+import scipy.io
 
 seasons = ["23/24", "22/23", "21/22", "20/21", "19/20","18/19","17/18","16/17","15/16","14/15"]
 
 
 market_values = defaultdict(lambda: defaultdict(float))
+possession = defaultdict(lambda: defaultdict(float))
 xgoalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsbyseason = defaultdict(lambda: defaultdict(float))
+goalsagainstbyseason = defaultdict(lambda: defaultdict(float))
+xgoalsagainstbyseason = defaultdict(lambda: defaultdict(float))
+
+results_by_season = {}
+
+team_replacements = {
+    "man": "manchester",
+    "utd": "united",
+    "luton": "lutontown",
+    "nott'hamforest": "nottinghamforest",
+    "wolves": "wolverhamptonwanderers",
+    "leicester": "leicestercity",
+    "leeds": "leedsunited",
+    "brighton": "brighton&hovealbion",
+    "westham": "westhamunited",
+    "newcastle": "newcastleunited",
+    "norwich": "norwichcity",
+    "tottenham": "tottenhamhotspur",
+    "huddersfield": "huddersfieldtown",
+    "chelse": "chelsea",
+    "westbrom": "westbromwichalbion",
+    "stoke": "stokecity",
+    "swansea": "swanseacity",
+    "qpr": "queensparkrangers",
+    "hull": "hullcity",
+    "cardiff": "cardiffcity"
+}
 
 
+def create_mat_file(enriched_results_by_season):
+    design_results = []
+    test_results = []
+    all_seasons = list(enriched_results_by_season.keys())
+
+    # Iterar sobre cada temporada para construir la estructura
+    for season in all_seasons:
+        if season == all_seasons[-1]:  # Si es la última temporada, la guardamos en Test
+            test_results.extend(enriched_results_by_season[season])
+        else:  # Otras temporadas van a Design
+            design_results.extend(enriched_results_by_season[season])
+
+    # Inicializar listas para las columnas de Design
+    design_C = []  # Para 0, 1 o 2
+    design_P = []  # Para posesión, goles, etc.
+
+    # Crear un array de ceros para almacenar los resultados y estadísticas
+    num_matches = len(design_results)
+
+    design_C = np.zeros(num_matches)  # Inicializar design_C con ceros
+    design_P = np.zeros((13, num_matches))  # 12 estadísticas por partido
+
+    for idx, match in enumerate(design_results):
+        # El resultado del partido
+        design_C[idx] = match[-2]  # El indicador de resultado (0, 1, 2)
+
+        # Llenar el array design_P con los datos correspondientes
+        design_P[0, idx] = match[2]  # Jornada
+        design_P[1, idx] = match[3]  # Valor del equipo local
+        design_P[2, idx] = match[4]  # Valor del equipo visitante
+        design_P[3, idx] = match[5]  # Posesión local
+        design_P[4, idx] = match[6]  # Posesión visitante
+        design_P[5, idx] = match[7]  # Goles a favor local
+        design_P[6, idx] = match[8]  # Goles a favor visitante
+        design_P[7, idx] = match[9]  # Goles en contra local
+        design_P[8, idx] = match[10]  # Goles en contra visitante
+        design_P[9, idx] = match[11]  # Expected goals local
+        design_P[10, idx] = match[12]  # Expected goals visitante
+        design_P[11, idx] = match[13]  # xGoals en contra local
+        design_P[12, idx] = match[14]  # xGoals en contra visitante
+
+    # Crear las estructuras para MATLAB
+    Design = {
+        'C': design_C,
+        'P': design_P
+    }
+
+    # Estructura Test similar a Design, pero solo para la última temporada
+    num_test_matches = len(test_results)
+    test_C = np.zeros(num_test_matches)
+    test_P = np.zeros((13, num_test_matches))  # 12 estadísticas por partido
+
+    for idx, match in enumerate(test_results):
+        test_C[idx] = match[-2]  # El indicador de resultado (0, 1, 2)
+        test_P[0, idx] = match[2]  # Jornada
+        test_P[1, idx] = match[3]  # Valor del equipo local
+        test_P[2, idx] = match[4]  # Valor del equipo visitante
+        test_P[3, idx] = match[5]  # Posesión local
+        test_P[4, idx] = match[6]  # Posesión visitante
+        test_P[5, idx] = match[7]  # Goles a favor local
+        test_P[6, idx] = match[8]  # Goles a favor visitante
+        test_P[7, idx] = match[9]  # Goles en contra local
+        test_P[8, idx] = match[10]  # Goles en contra visitante
+        test_P[9, idx] = match[11]  # Expected goals local
+        test_P[10, idx] = match[12]  # Expected goals visitante
+        test_P[11, idx] = match[13]  # xGoals en contra local
+        test_P[12, idx] = match[14]  # xGoals en contra visitante
+
+    Test = {
+        'C': test_C,
+        'P': test_P
+    }
+
+    # Guardar en archivo .mat
+    scipy.io.savemat('PremierLeague.mat', {'Design': Design, 'Test': Test})
+
+
+
+
+
+def enrich_results_with_stats(results_by_season, market_values, possession, goalsbyseason, goalsagainstbyseason, xgoalsbyseason, xgoalsagainstbyseason):
+    enriched_results_by_season = {}
+
+    for season, matches in results_by_season.items():
+        enriched_results = []
+        for match in matches:
+            teams, score, jornada = match
+
+            # Obtener los nombres de los equipos
+            team1, team2 = teams.split("_")
+
+            # Obtener estadísticas para cada equipo
+            try:
+                team1_market_value = market_values[season][team1]
+                team2_market_value = market_values[season][team2]
+            except KeyError:
+                team1_market_value = 0  # Valor por defecto si no se encuentra
+                team2_market_value = 0  # Valor por defecto si no se encuentra
+
+            try:
+                team1_possession = possession[season][team1]
+                team2_possession = possession[season][team2]
+            except KeyError:
+                team1_possession = 0  # Valor por defecto si no se encuentra
+                team2_possession = 0  # Valor por defecto si no se encuentra
+
+            # Obtener goles a favor previo a la jornada en disputa (jornada - 1)
+            jornada_index = int(jornada) - 1  # Convertir jornada a índice
+            try:
+                team1_goals = goalsbyseason[season][team1][jornada_index]
+                team2_goals = goalsbyseason[season][team2][jornada_index]
+            except KeyError:
+                team1_goals = 0  # Valor por defecto si no se encuentra
+                team2_goals = 0  # Valor por defecto si no se encuentra
+            except IndexError:
+                team1_goals = 0  # Valor por defecto si el índice está fuera de rango
+                team2_goals = 0  # Valor por defecto si el índice está fuera de rango
+
+            try:
+                team1_xgoalsagainst = xgoalsagainstbyseason[season][team1][jornada_index]
+                team2_xgoalsagainst = xgoalsagainstbyseason[season][team2][jornada_index]
+            except KeyError:
+                team1_xgoalsagainst = 0  # Valor por defecto si no se encuentra
+                team2_xgoalsagainst = 0  # Valor por defecto si no se encuentra
+            except IndexError:
+                team1_xgoalsagainst = 0  # Valor por defecto si el índice está fuera de rango
+                team2_xgoalsagainst = 0  # Valor por defecto si el índice está fuera de rango
+
+            try:
+                team1_xgoals = xgoalsbyseason[season][team1][jornada_index]
+                team2_xgoals = xgoalsbyseason[season][team2][jornada_index]
+            except KeyError:
+                team1_xgoals = 0  # Valor por defecto si no se encuentra
+                team2_xgoals = 0  # Valor por defecto si no se encuentra
+            except IndexError:
+                team1_xgoals = 0  # Valor por defecto si el índice está fuera de rango
+                team2_xgoals = 0  # Valor por defecto si el índice está fuera de rango
+
+            try:
+                team1_goalsagainst = goalsagainstbyseason[season][team1][jornada_index]
+                team2_goalsagainst = goalsagainstbyseason[season][team2][jornada_index]
+            except KeyError:
+                team1_goalsagainst = 0  # Valor por defecto si no se encuentra
+                team2_goalsagainst = 0  # Valor por defecto si no se encuentra
+            except IndexError:
+                team1_goalsagainst = 0  # Valor por defecto si el índice está fuera de rango
+                team2_goalsagainst = 0  # Valor por defecto si el índice está fuera de rango
+
+            # Determinar el resultado del partido
+            local_goals, visitor_goals = map(int, score.split(':'))
+            if local_goals > visitor_goals:
+                result_indicator = 0  # Victoria del equipo local
+            elif local_goals < visitor_goals:
+                result_indicator = 2  # Victoria del equipo visitante
+            else:
+                result_indicator = 1  # Empate
+
+            # Calcular el número total de goles
+            total_goals = local_goals + visitor_goals
+
+            # Agregar la información de estadísticas al resultado del partido
+            enriched_results.append([
+                teams,  # 'manchestercity_arsenal'
+                score,  # '1:1'
+                jornada,  # '13'
+                team1_market_value,  # Valor plantilla manchester city
+                team2_market_value,  # Valor plantilla arsenal
+                team1_possession,  # Posesión manchester city
+                team2_possession,  # Posesión arsenal
+                team1_goals,  # Goles a favor manchester city antes de la jornada 13
+                team2_goals,  # Goles a favor arsenal antes de la jornada 13
+                team1_goalsagainst,  # Goles en contra manchester city
+                team2_goalsagainst,  # Goles en contra arsenal
+                team1_xgoals,  # Expected goals manchester city
+                team2_xgoals,  # Expected goals arsenal
+                team1_xgoalsagainst,  # Expected goals en contra manchester city
+                team2_xgoalsagainst,  # Expected goals en contra arsenal
+                result_indicator,  # Indicador de resultado del partido
+                total_goals  # Total de goles marcados en el partido
+            ])
+
+        # Guardar los resultados enriquecidos en el nuevo diccionario
+        enriched_results_by_season[season] = enriched_results
+
+    return enriched_results_by_season
+def unify_team_keys(dictionaries, seasons):
+    for dictionary in dictionaries:
+        for season in seasons:
+            keys_to_modify = list(dictionary[season].keys())
+            for team in keys_to_modify:
+                # Convertir a minúsculas y eliminar espacios y puntos
+                clean_team = re.sub(r"[ .]", "", team.lower())
+
+                # Aplicar reemplazos específicos si el nombre limpio no contiene ya el reemplazo completo
+                for abbrev, full_name in team_replacements.items():
+                    if abbrev in clean_team and full_name not in clean_team:
+                        clean_team = clean_team.replace(abbrev, full_name)
+
+                clean_team = re.sub(r"^(fc|afc)|(?:fc|afc)$", "", clean_team)
+                for abbrev, full_name in team_replacements.items():
+                    if abbrev in clean_team and full_name not in clean_team:
+                        clean_team = clean_team.replace(abbrev, full_name)
+                # Asignar el valor a la clave limpia y eliminar la clave original
+                dictionary[season][clean_team] = dictionary[season].pop(team)
+
+
+def check_unique_teams(dicts_to_clean):
+    unique_teams = set()
+    # Recorrer cada diccionario y cada temporada para obtener los nombres de equipos
+    for dictionary in dicts_to_clean:
+        for season, teams in dictionary.items():
+            unique_teams.update(teams.keys())  # Añadir equipos únicos
+
+    # Imprimir nombres de equipos sin duplicados
+    for team in sorted(unique_teams):
+        print(team)
+
+
+def clean_team_name(team_name):
+    # Convertir a minúsculas y eliminar espacios y puntos
+    clean_team = re.sub(r"[ .-]", "", team_name.lower())
+    # Eliminar 'fc' y 'afc' si están al principio o al final
+    clean_team = re.sub(r"^(fc|afc)|(?:fc|afc)$", "", clean_team)
+    # Aplicar reemplazos específicos
+    for abbrev, full_name in team_replacements.items():
+        if abbrev in clean_team and full_name not in clean_team:
+            clean_team = clean_team.replace(abbrev, full_name)
+    return clean_team
+
+def store_results_by_season(season, results_by_season):
+
+    # Scrapear resultados de la temporada
+    results = scrap_matrix_results(season=season)
+
+    # Limpiar los nombres de los equipos en los resultados
+    cleaned_results = []
+    for match in results:
+        teams, score, jornada = match
+        team1, team2 = teams.split("_")
+        cleaned_team1 = clean_team_name(team1)
+        cleaned_team2 = clean_team_name(team2)
+        cleaned_results.append([f"{cleaned_team1}_{cleaned_team2}", score, jornada])
+
+    # Guardar los resultados limpios en el diccionario
+    results_by_season[season] = cleaned_results
+    return results_by_season
+def scrapp_possession_per_team(season, clubs):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    next_year = str(int(season.split("/")[0]) + 2001)
+    middle = last_year + "-" + next_year
+    url_base = f"https://fbref.com/en/comps/9/{middle}/possession/{middle}-Premier-League-Stats"
+    response = requests.get(url_base, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Encuentra la tabla que contiene la información deseada
+    tabla_equipos = soup.find("table", {"class": "stats_table"})
+
+    if not tabla_equipos:
+        return {}
+
+    # Procesa las filas para extraer los equipos y su posesión
+    filas = tabla_equipos.find_all("tr")
+    for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados
+        columnas = fila.find_all("td")
+        if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
+            continue
+
+        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
+        posesion = columnas[1].text.strip()  # La columna de posesión suele ser la tercera
+
+        # Convertir la posesión a float después de limpiar el texto
+        posesion = float(posesion.replace("%", "").strip())
+
+        # Guardar en el diccionario clubs
+        if season not in clubs:
+            clubs[season] = {}
+        clubs[season][nombre_equipo] = posesion
+
+    return clubs
+
+def scrap_xgoalsagainst(season,xg_by_season_club):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    url_base = "https://understat.com/league/EPL/"
+    last_year_url = url_base + last_year
+    response = requests.get(last_year_url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    # Buscar el script que contiene los datos JSON
+    script = soup.find('script', string=lambda t: t and 'datesData' in t)
+    json_data = None
+
+    if script:
+        # Extraer el contenido JSON
+        json_text = script.string
+        start_index = json_text.index('=') + 14
+        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
+        json_text = json_text[start_index:end_index].strip()  # Limpia el text
+        # Decodificar caracteres de escape hexadecimales
+        json_text = decode_hex_string(json_text)
+        try:
+            matches = json.loads(json_text)  # Convertir a objeto de Python
+        except json.JSONDecodeError as e:
+            print(f"Error al decodificar JSON: {e}")
+            return None
+
+        xg_by_season_club[season] = {}
+
+        # Sumar xG para cada equipo
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            home_xg = float(match['xG']['h'])
+            away_xg = float(match['xG']['a'])
+
+            # Sumar para el equipo local
+            if home_team not in xg_by_season_club[season]:
+                xg_by_season_club[season][home_team] = []
+
+
+            if away_team not in xg_by_season_club[season]:
+                xg_by_season_club[season][away_team] = []
+
+            # Agregar los xG a la lista correspondiente
+            xg_by_season_club[season][home_team].append(away_xg)
+            xg_by_season_club[season][away_team].append(home_xg)
+        # Calcular los xG acumulados
+        if season in xg_by_season_club:
+            for team, xg_list in xg_by_season_club[season].items():
+                # Crear una lista acumulativa
+                accumulated_xg = []
+                total_xg = 0
+
+                for xg in xg_list:
+                    total_xg += xg
+                    accumulated_xg.append(total_xg)
+
+                # Reemplazar la lista original con la lista acumulada
+                xg_by_season_club[season][team] = accumulated_xg
+    return xg_by_season_club
+def scrap_goalsagainst(season,goalsbyseason):
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    url_base = "https://understat.com/league/EPL/"
+    last_year_url = url_base + last_year
+    response = requests.get(last_year_url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    # Buscar el script que contiene los datos JSON
+    script = soup.find('script', string=lambda t: t and 'datesData' in t)
+    json_data = None
+
+    if script:
+        # Extraer el contenido JSON
+        json_text = script.string
+        start_index = json_text.index('=') + 14
+        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
+        json_text = json_text[start_index:end_index].strip()  # Limpia el text
+        # Decodificar caracteres de escape hexadecimales
+        json_text = decode_hex_string(json_text)
+        try:
+            matches = json.loads(json_text)  # Convertir a objeto de Python
+        except json.JSONDecodeError as e:
+            print(f"Error al decodificar JSON: {e}")
+            return None
+
+        goalsbyseason[season] = {}
+
+        # Sumar xG para cada equipo
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            home_xg = float(match['goals']['h'])
+            away_xg = float(match['goals']['a'])
+
+            # Sumar para el equipo local
+            if home_team not in goalsbyseason[season]:
+                goalsbyseason[season][home_team] = []
+
+
+            if away_team not in goalsbyseason[season]:
+                goalsbyseason[season][away_team] = []
+
+            # Agregar los xG a la lista correspondiente
+            goalsbyseason[season][home_team].append(away_xg)
+            goalsbyseason[season][away_team].append(home_xg)
+        # Calcular los xG acumulados
+        if season in goalsbyseason:
+            for team, xg_list in goalsbyseason[season].items():
+                # Crear una lista acumulativa
+                accumulated_xg = []
+                total_xg = 0
+
+                for xg in xg_list:
+                    total_xg += xg
+                    accumulated_xg.append(total_xg)
+
+                # Reemplazar la lista original con la lista acumulada
+                goalsbyseason[season][team] = accumulated_xg
+    return goalsbyseason
 
 def scrap_goals(season,goalsbyseason):
 
@@ -220,12 +656,23 @@ def scrapp_season_teams_value(season,clubs):
         this_season_values.append(valor_float)
         clubs[season][nombre_equipo] = valor_float
 
-    return market_values
+    return clubs
 
 for season in seasons:
-    # market_values = scrapp_season_teams_value(season=season,clubs=market_values)
-    # print(market_values)
-    # print(scrap_matrix_results(season=season))
-    #xgoalsbyseason = scrap_xgoals(season=season,xg_by_season_club=xgoalsbyseason)
+    market_values = scrapp_season_teams_value(season=season,clubs=market_values)
+    #print(market_values)
+    results = scrap_matrix_results(season=season)
+    results_by_season = store_results_by_season(season=season, results_by_season=results_by_season)
+    xgoalsbyseason = scrap_xgoals(season=season,xg_by_season_club=xgoalsbyseason)
     goalsbyseason= scrap_goals(season=season, goalsbyseason=goalsbyseason)
-    print(goalsbyseason)
+    goalsagainstbyseason = scrap_goalsagainst(season=season, goalsbyseason=goalsagainstbyseason)
+    xgoalsagainstbyseason = scrap_xgoalsagainst(season=season, xg_by_season_club= xgoalsagainstbyseason)
+    possession = scrapp_possession_per_team(season=season, clubs=possession)
+
+#print(results_by_season)
+dictionaries = [market_values, xgoalsbyseason, goalsbyseason, goalsagainstbyseason, xgoalsagainstbyseason, possession]
+unify_team_keys(dictionaries=dictionaries, seasons=seasons)
+check_unique_teams(dicts_to_clean=dictionaries)
+enriched_results = enrich_results_with_stats(results_by_season=results_by_season,market_values=market_values, possession= possession, goalsbyseason=goalsbyseason, goalsagainstbyseason=goalsagainstbyseason, xgoalsbyseason=xgoalsbyseason, xgoalsagainstbyseason=xgoalsagainstbyseason)
+create_mat_file(enriched_results_by_season=enriched_results)
+print(enriched_results)
