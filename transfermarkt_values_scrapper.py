@@ -17,7 +17,7 @@ xgoalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsagainstbyseason = defaultdict(lambda: defaultdict(float))
 xgoalsagainstbyseason = defaultdict(lambda: defaultdict(float))
-
+pointsbyseason = defaultdict(lambda: defaultdict(float))
 results_by_season = {}
 
 team_replacements = {
@@ -44,6 +44,111 @@ team_replacements = {
 }
 
 
+def decode_hex_string(hex_string):
+    return bytes(hex_string, "utf-8").decode("unicode_escape")
+
+def scrap_points(season, pointsbyseason):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    url_base = "https://understat.com/league/EPL/"
+    last_year_url = url_base + last_year
+    response = requests.get(last_year_url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    script = soup.find('script', string=lambda t: t and 'datesData' in t)
+    json_data = None
+
+    if script:
+        json_text = script.string
+        start_index = json_text.index('=') + 14
+        end_index = json_text.rindex(';') - 34
+        json_text = json_text[start_index:end_index].strip()
+        json_text = decode_hex_string(json_text)
+        try:
+            matches = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {e}")
+            return None
+
+        pointsbyseason[season] = {}
+
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            if home_team not in pointsbyseason[season]:
+                pointsbyseason[season][home_team] = []
+            if away_team not in pointsbyseason[season]:
+                pointsbyseason[season][away_team] = []
+
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            home_goals = int(match['goals']['h'])
+            away_goals = int(match['goals']['a'])
+
+            if home_goals > away_goals:
+                home_points = 3
+                away_points = 0
+            elif home_goals < away_goals:
+                home_points = 0
+                away_points = 3
+            else:
+                home_points = 1
+                away_points = 1
+
+            pointsbyseason[season][home_team].append(home_points)
+            pointsbyseason[season][away_team].append(away_points)
+
+        if season in pointsbyseason:
+            for team, points_list in pointsbyseason[season].items():
+                accumulated_points = [0]  # Start with 0
+                total_points = 0
+
+                for points in points_list[:-1]:  # Exclude the last value
+                    total_points += points
+                    accumulated_points.append(total_points)
+
+                pointsbyseason[season][team] = accumulated_points
+
+    return pointsbyseason
+
+
+
+
+
+def create_mat_file_with_V(enriched_results_by_season):
+    design_results = []
+    test_results = []
+    all_seasons = list(enriched_results_by_season.keys())
+
+    # Dividir las temporadas entre Design y Test
+    for season in all_seasons:
+        if season == all_seasons[-1]:  # Última temporada para Test
+            test_results.extend(enriched_results_by_season[season])
+        else:
+            design_results.extend(enriched_results_by_season[season])
+
+    # Inicializar matrices para Design
+    design_C = np.array([match[-1] for match in design_results])  # 0, 1, 2 resultados
+    design_P = np.array([
+        [match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
+        for match in design_results
+    ]).T
+
+    # Crear estructuras para MATLAB
+    Design = {'V': design_C, 'P': design_P}
+    Test = {
+        'V': np.array([match[-1] for match in test_results]),  # total_goals guardado en match[-1]
+        'P': np.array([
+            [match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
+            for match in test_results
+        ]).T
+    }
+
+    # Guardar en archivo .mat
+    scipy.io.savemat('PremierLeague_with_V.mat', {'Design': Design, 'Test': Test})
+
 def create_mat_file(enriched_results_by_season):
     design_results = []
     test_results = []
@@ -64,7 +169,7 @@ def create_mat_file(enriched_results_by_season):
     num_matches = len(design_results)
 
     design_C = np.zeros(num_matches)  # Inicializar design_C con ceros
-    design_P = np.zeros((13, num_matches))  # 12 estadísticas por partido
+    design_P = np.zeros((15, num_matches))  # 12 estadísticas por partido
 
     for idx, match in enumerate(design_results):
         # El resultado del partido
@@ -72,18 +177,20 @@ def create_mat_file(enriched_results_by_season):
 
         # Llenar el array design_P con los datos correspondientes
         design_P[0, idx] = match[2]  # Jornada
-        design_P[1, idx] = match[3]  # Valor del equipo local
-        design_P[2, idx] = match[4]  # Valor del equipo visitante
-        design_P[3, idx] = match[5]  # Posesión local
-        design_P[4, idx] = match[6]  # Posesión visitante
-        design_P[5, idx] = match[7]  # Goles a favor local
-        design_P[6, idx] = match[8]  # Goles a favor visitante
-        design_P[7, idx] = match[9]  # Goles en contra local
-        design_P[8, idx] = match[10]  # Goles en contra visitante
-        design_P[9, idx] = match[11]  # Expected goals local
-        design_P[10, idx] = match[12]  # Expected goals visitante
-        design_P[11, idx] = match[13]  # xGoals en contra local
-        design_P[12, idx] = match[14]  # xGoals en contra visitante
+        design_P[1, idx] = match[3]  # Puntoslocal
+        design_P[2, idx] = match[4]  # Puntos visitante
+        design_P[3, idx] = match[5]  # Valor del equipo local
+        design_P[4, idx] = match[6]  # Valor del equipo visitante
+        design_P[5, idx] = match[7]  # Posesión local
+        design_P[6, idx] = match[8]  # Posesión visitante
+        design_P[7, idx] = match[9]  # Goles a favor local
+        design_P[8, idx] = match[10]  # Goles a favor visitante
+        design_P[9, idx] = match[11]  # Goles en contra local
+        design_P[10, idx] = match[12]  # Goles en contra visitante
+        design_P[11, idx] = match[13]  # Expected goals local
+        design_P[12, idx] = match[14]  # Expected goals visitante
+        design_P[13, idx] = match[15]  # xGoals en contra local
+        design_P[14, idx] = match[16]  # xGoals en contra visitante
 
     # Crear las estructuras para MATLAB
     Design = {
@@ -94,23 +201,25 @@ def create_mat_file(enriched_results_by_season):
     # Estructura Test similar a Design, pero solo para la última temporada
     num_test_matches = len(test_results)
     test_C = np.zeros(num_test_matches)
-    test_P = np.zeros((13, num_test_matches))  # 12 estadísticas por partido
+    test_P = np.zeros((15, num_test_matches))  # 12 estadísticas por partido
 
     for idx, match in enumerate(test_results):
         test_C[idx] = match[-2]  # El indicador de resultado (0, 1, 2)
         test_P[0, idx] = match[2]  # Jornada
-        test_P[1, idx] = match[3]  # Valor del equipo local
-        test_P[2, idx] = match[4]  # Valor del equipo visitante
-        test_P[3, idx] = match[5]  # Posesión local
-        test_P[4, idx] = match[6]  # Posesión visitante
-        test_P[5, idx] = match[7]  # Goles a favor local
-        test_P[6, idx] = match[8]  # Goles a favor visitante
-        test_P[7, idx] = match[9]  # Goles en contra local
-        test_P[8, idx] = match[10]  # Goles en contra visitante
-        test_P[9, idx] = match[11]  # Expected goals local
-        test_P[10, idx] = match[12]  # Expected goals visitante
-        test_P[11, idx] = match[13]  # xGoals en contra local
-        test_P[12, idx] = match[14]  # xGoals en contra visitante
+        design_P[1, idx] = match[3]  # Puntoslocal
+        design_P[2, idx] = match[4]  # Puntos visitante
+        test_P[3, idx] = match[5]  # Valor del equipo local
+        test_P[4, idx] = match[6]  # Valor del equipo visitante
+        test_P[5, idx] = match[7]  # Posesión local
+        test_P[6, idx] = match[8]  # Posesión visitante
+        test_P[7, idx] = match[9]  # Goles a favor local
+        test_P[8, idx] = match[10]  # Goles a favor visitante
+        test_P[9, idx] = match[11]  # Goles en contra local
+        test_P[10, idx] = match[12]  # Goles en contra visitante
+        test_P[11, idx] = match[13]  # Expected goals local
+        test_P[12, idx] = match[14]  # Expected goals visitante
+        test_P[13, idx] = match[15]  # xGoals en contra local
+        test_P[14, idx] = match[16]  # xGoals en contra visitante
 
     Test = {
         'C': test_C,
@@ -124,7 +233,7 @@ def create_mat_file(enriched_results_by_season):
 
 
 
-def enrich_results_with_stats(results_by_season, market_values, possession, goalsbyseason, goalsagainstbyseason, xgoalsbyseason, xgoalsagainstbyseason):
+def enrich_results_with_stats(results_by_season, market_values, possession, goalsbyseason, goalsagainstbyseason, xgoalsbyseason, xgoalsagainstbyseason, pointsbyseason):
     enriched_results_by_season = {}
 
     for season, matches in results_by_season.items():
@@ -171,7 +280,15 @@ def enrich_results_with_stats(results_by_season, market_values, possession, goal
             except IndexError:
                 team1_xgoalsagainst = 0  # Valor por defecto si el índice está fuera de rango
                 team2_xgoalsagainst = 0  # Valor por defecto si el índice está fuera de rango
-
+            try:
+                team1_points = pointsbyseason[season][team1][jornada_index]
+                team2_points = pointsbyseason[season][team2][jornada_index]
+            except KeyError:
+                team1_points = 0  # Valor por defecto si no se encuentra
+                team2_points = 0  # Valor por defecto si no se encuentra
+            except IndexError:
+                team1_points = 0  # Valor por defecto si el índice está fuera de rango
+                team2_points = 0  # Valor por defecto si el índice está fuera de rango
             try:
                 team1_xgoals = xgoalsbyseason[season][team1][jornada_index]
                 team2_xgoals = xgoalsbyseason[season][team2][jornada_index]
@@ -209,6 +326,8 @@ def enrich_results_with_stats(results_by_season, market_values, possession, goal
                 teams,  # 'manchestercity_arsenal'
                 score,  # '1:1'
                 jornada,  # '13'
+                team1_points,
+                team2_points,
                 team1_market_value,  # Valor plantilla manchester city
                 team2_market_value,  # Valor plantilla arsenal
                 team1_possession,  # Posesión manchester city
@@ -513,9 +632,7 @@ def scrap_goals(season,goalsbyseason):
                 # Reemplazar la lista original con la lista acumulada
                 goalsbyseason[season][team] = accumulated_xg
     return goalsbyseason
-def decode_hex_string(hex_string):
-    # Decodifica los caracteres de escape hexadecimales
-    return bytes(hex_string, "utf-8").decode("unicode_escape")
+
 def scrap_xgoals(season,xg_by_season_club):
 
     headers = {
@@ -625,6 +742,7 @@ def scrap_matrix_results(season):
     return results_vector
 
 def scrapp_season_teams_value(season,clubs):
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -668,11 +786,12 @@ for season in seasons:
     goalsagainstbyseason = scrap_goalsagainst(season=season, goalsbyseason=goalsagainstbyseason)
     xgoalsagainstbyseason = scrap_xgoalsagainst(season=season, xg_by_season_club= xgoalsagainstbyseason)
     possession = scrapp_possession_per_team(season=season, clubs=possession)
+    pointsbyseason = scrap_points(season=season, pointsbyseason=pointsbyseason)
 
 #print(results_by_season)
-dictionaries = [market_values, xgoalsbyseason, goalsbyseason, goalsagainstbyseason, xgoalsagainstbyseason, possession]
+dictionaries = [market_values, xgoalsbyseason, goalsbyseason, goalsagainstbyseason, xgoalsagainstbyseason, possession, pointsbyseason]
 unify_team_keys(dictionaries=dictionaries, seasons=seasons)
 check_unique_teams(dicts_to_clean=dictionaries)
-enriched_results = enrich_results_with_stats(results_by_season=results_by_season,market_values=market_values, possession= possession, goalsbyseason=goalsbyseason, goalsagainstbyseason=goalsagainstbyseason, xgoalsbyseason=xgoalsbyseason, xgoalsagainstbyseason=xgoalsagainstbyseason)
+enriched_results = enrich_results_with_stats(results_by_season=results_by_season,market_values=market_values, possession= possession, goalsbyseason=goalsbyseason, goalsagainstbyseason=goalsagainstbyseason, xgoalsbyseason=xgoalsbyseason, xgoalsagainstbyseason=xgoalsagainstbyseason, pointsbyseason= pointsbyseason)
 create_mat_file(enriched_results_by_season=enriched_results)
-print(enriched_results)
+create_mat_file_with_V(enriched_results_by_season=enriched_results)
