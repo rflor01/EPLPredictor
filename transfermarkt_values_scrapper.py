@@ -13,11 +13,14 @@ seasons = ["23/24", "22/23", "21/22", "20/21", "19/20","18/19","17/18","16/17","
 
 market_values = defaultdict(lambda: defaultdict(float))
 possession = defaultdict(lambda: defaultdict(float))
+recoveries = defaultdict(lambda: defaultdict(float))
 xgoalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsagainstbyseason = defaultdict(lambda: defaultdict(float))
 xgoalsagainstbyseason = defaultdict(lambda: defaultdict(float))
 pointsbyseason = defaultdict(lambda: defaultdict(float))
+cleansheets = defaultdict(lambda: defaultdict(float))
+streaks = defaultdict(lambda: defaultdict(float))
 results_by_season = {}
 
 team_replacements = {
@@ -46,6 +49,73 @@ team_replacements = {
 
 def decode_hex_string(hex_string):
     return bytes(hex_string, "utf-8").decode("unicode_escape")
+
+
+def scrap_streak(season, pointsbyseason):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    url_base = "https://understat.com/league/EPL/"
+    last_year_url = url_base + last_year
+    response = requests.get(last_year_url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    script = soup.find('script', string=lambda t: t and 'datesData' in t)
+    json_data = None
+
+    if script:
+        json_text = script.string
+        start_index = json_text.index('=') + 14
+        end_index = json_text.rindex(';') - 34
+        json_text = json_text[start_index:end_index].strip()
+        json_text = decode_hex_string(json_text)
+        try:
+            matches = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {e}")
+            return None
+
+        pointsbyseason[season] = {}
+
+        # Inicializar puntos por equipo
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            if home_team not in pointsbyseason[season]:
+                pointsbyseason[season][home_team] = []
+            if away_team not in pointsbyseason[season]:
+                pointsbyseason[season][away_team] = []
+
+        # Agregar puntos por partido
+        for match in matches:
+            home_team = match['h']['title']
+            away_team = match['a']['title']
+            home_goals = int(match['goals']['h'])
+            away_goals = int(match['goals']['a'])
+
+            if home_goals > away_goals:
+                home_points = 3
+                away_points = 0
+            elif home_goals < away_goals:
+                home_points = 0
+                away_points = 3
+            else:
+                home_points = 1
+                away_points = 1
+
+            pointsbyseason[season][home_team].append(home_points)
+            pointsbyseason[season][away_team].append(away_points)
+
+        # Calcular puntos de los últimos 5 partidos
+        if season in pointsbyseason:
+            for team, points_list in pointsbyseason[season].items():
+                last_5_points = [sum(points_list[max(0, i - 4):i + 1]) for i in range(len(points_list))]
+                pointsbyseason[season][team] = last_5_points
+
+    return pointsbyseason
+
+
+
 
 def scrap_points(season, pointsbyseason):
     headers = {
@@ -124,7 +194,7 @@ def create_mat_file_with_V(enriched_results_by_season):
 
     # Dividir las temporadas entre Design y Test
     for season in all_seasons:
-        if season == all_seasons[-1]:  # Última temporada para Test
+        if season == all_seasons[0]:  # Última temporada para Test
             test_results.extend(enriched_results_by_season[season])
         else:
             design_results.extend(enriched_results_by_season[season])
@@ -132,16 +202,16 @@ def create_mat_file_with_V(enriched_results_by_season):
     # Inicializar matrices para Design
     design_C = np.array([match[-1] for match in design_results])  # 0, 1, 2 resultados
     design_P = np.array([
-        [match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
+        [match[2], match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
         for match in design_results
     ]).T
 
     # Crear estructuras para MATLAB
-    Design = {'V': design_C, 'P': design_P}
+    Design = {'T': design_C, 'P': design_P}
     Test = {
-        'V': np.array([match[-1] for match in test_results]),  # total_goals guardado en match[-1]
+        'T': np.array([match[-1] for match in test_results]),  # total_goals guardado en match[-1]
         'P': np.array([
-            [match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
+            [match[2],match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
             for match in test_results
         ]).T
     }
@@ -156,7 +226,7 @@ def create_mat_file(enriched_results_by_season):
 
     # Iterar sobre cada temporada para construir la estructura
     for season in all_seasons:
-        if season == all_seasons[-1]:  # Si es la última temporada, la guardamos en Test
+        if season == all_seasons[0]:  # Si es la última temporada, la guardamos en Test
             test_results.extend(enriched_results_by_season[season])
         else:  # Otras temporadas van a Design
             design_results.extend(enriched_results_by_season[season])
@@ -409,6 +479,84 @@ def store_results_by_season(season, results_by_season):
     # Guardar los resultados limpios en el diccionario
     results_by_season[season] = cleaned_results
     return results_by_season
+
+
+
+def scrap_clean_sheets(season, clubs):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    next_year = str(int(season.split("/")[0]) + 2001)
+    middle = last_year + "-" + next_year
+    url_base = f"https://fbref.com/en/comps/9/{middle}/misc/{middle}-Premier-League-Stats"
+    response = requests.get(url_base, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Encuentra la tabla que contiene la información deseada
+    tabla_equipos = soup.find("table", {"class": "stats_table"})
+
+    if not tabla_equipos:
+        return {}
+
+    # Procesa las filas para extraer los equipos y su posesión
+    filas = tabla_equipos.find_all("tr")
+    for fila in filas[15:]:  # Salta la primera fila que contiene los encabezados %RECOVERIES
+        columnas = fila.find_all("td")
+        if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
+            continue
+
+        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
+        posesion = columnas[1].text.strip()  # La columna de posesión suele ser la tercera
+
+        # Convertir la posesión a float después de limpiar el texto
+        posesion = float(posesion.replace("%", "").strip())
+
+        # Guardar en el diccionario clubs
+        if season not in clubs:
+            clubs[season] = {}
+        clubs[season][nombre_equipo] = posesion
+
+    return clubs
+
+def scrapp_recoveries_per_team(season, clubs):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    next_year = str(int(season.split("/")[0]) + 2001)
+    middle = last_year + "-" + next_year
+    url_base = f"https://fbref.com/en/comps/9/{middle}/misc/{middle}-Premier-League-Stats"
+    response = requests.get(url_base, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Encuentra la tabla que contiene la información deseada
+    tabla_equipos = soup.find("table", {"class": "stats_table"})
+
+    if not tabla_equipos:
+        return {}
+
+    # Procesa las filas para extraer los equipos y su posesión
+    filas = tabla_equipos.find_all("tr")
+    for fila in filas[14:]:  # Salta la primera fila que contiene los encabezados %RECOVERIES
+        columnas = fila.find_all("td")
+        if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
+            continue
+
+        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
+        posesion = columnas[1].text.strip()  # La columna de posesión suele ser la tercera
+
+        # Convertir la posesión a float después de limpiar el texto
+        posesion = float(posesion.replace("%", "").strip())
+
+        # Guardar en el diccionario clubs
+        if season not in clubs:
+            clubs[season] = {}
+        clubs[season][nombre_equipo] = posesion
+
+    return clubs
+
+
 def scrapp_possession_per_team(season, clubs):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -786,7 +934,10 @@ for season in seasons:
     goalsagainstbyseason = scrap_goalsagainst(season=season, goalsbyseason=goalsagainstbyseason)
     xgoalsagainstbyseason = scrap_xgoalsagainst(season=season, xg_by_season_club= xgoalsagainstbyseason)
     possession = scrapp_possession_per_team(season=season, clubs=possession)
+    recoveries = scrapp_recoveries_per_team(season= season, clubs=recoveries)
     pointsbyseason = scrap_points(season=season, pointsbyseason=pointsbyseason)
+    cleansheets = scrap_clean_sheets(season=season, pointsbyseason=cleansheets)
+    streaks = scrap_streak(season=season, pointsbyseason=streaks)
 
 #print(results_by_season)
 dictionaries = [market_values, xgoalsbyseason, goalsbyseason, goalsagainstbyseason, xgoalsagainstbyseason, possession, pointsbyseason]
