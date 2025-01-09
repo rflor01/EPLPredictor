@@ -11,6 +11,7 @@ import scipy.io
 seasons = ["23/24", "22/23", "21/22", "20/21", "19/20","18/19","17/18","16/17","15/16","14/15"]
 
 meanage = defaultdict(lambda: defaultdict(float))
+progressive_passes = defaultdict(lambda: defaultdict(float))
 market_values = defaultdict(lambda: defaultdict(float))
 possession = defaultdict(lambda: defaultdict(float))
 recoveries = defaultdict(lambda: defaultdict(float))
@@ -481,6 +482,42 @@ def store_results_by_season(season, results_by_season):
     return results_by_season
 
 
+def scra_progressivepasses_per_team(season, clubs):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    next_year = str(int(season.split("/")[0]) + 2001)
+    middle = last_year + "-" + next_year
+    url_base = f"https://fbref.com/en/comps/9/{middle}/stats/{middle}-Premier-League-Stats"
+    response = requests.get(url_base, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Encuentra la tabla que contiene la información deseada
+    tabla_equipos = soup.find("table", {"class": "stats_table"})
+
+    if not tabla_equipos:
+        return {}
+
+    # Procesa las filas para extraer los equipos y su posesión
+    filas = tabla_equipos.find_all("tr")
+    for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados %RECOVERIES
+        columnas = fila.find_all("td")
+        if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
+            continue
+
+        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
+        posesion = columnas[20].text.strip()  # La columna de posesión suele ser la tercera
+
+        # Convertir la posesión a float después de limpiar el texto
+        posesion = float(posesion.replace("%", "").strip())
+
+        # Guardar en el diccionario clubs
+        if season not in clubs:
+            clubs[season] = {}
+        clubs[season][nombre_equipo] = posesion
+
+    return clubs
 
 def scrap_clean_sheets(season, clubs):
     headers = {
@@ -489,7 +526,7 @@ def scrap_clean_sheets(season, clubs):
     last_year = str(int(season.split("/")[0]) + 2000)
     next_year = str(int(season.split("/")[0]) + 2001)
     middle = last_year + "-" + next_year
-    url_base = f"https://fbref.com/en/comps/9/{middle}/misc/{middle}-Premier-League-Stats"
+    url_base = f"https://fbref.com/en/comps/9/{middle}/keepers/{middle}-Premier-League-Stats"
     response = requests.get(url_base, headers=headers)
     soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -555,6 +592,44 @@ def scrapp_recoveries_per_team(season, clubs):
         clubs[season][nombre_equipo] = posesion
 
     return clubs
+
+def scrap_wage(season, clubs):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    last_year = str(int(season.split("/")[0]) + 2000)
+    next_year = str(int(season.split("/")[0]) + 2001)
+    middle = last_year + "-" + next_year
+    url_base = f"https://fbref.com/en/comps/9/{middle}/wages/{middle}-Premier-League-Stats"
+    response = requests.get(url_base, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Encuentra la tabla que contiene la información deseada
+    tabla_equipos = soup.find("table", {"class": "stats_table"})
+
+    if not tabla_equipos:
+        return {}
+
+    # Procesa las filas para extraer los equipos y su posesión
+    filas = tabla_equipos.find_all("tr")
+    for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados
+        columnas = fila.find_all("td")
+        if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
+            continue
+
+        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
+        posesion = columnas[1].text.strip()  # La columna de posesión suele ser la tercera
+
+        # Convertir la posesión a float después de limpiar el texto
+        posesion = float(posesion.replace("%", "").strip())
+
+        # Guardar en el diccionario clubs
+        if season not in clubs:
+            clubs[season] = {}
+        clubs[season][nombre_equipo] = posesion
+
+    return clubs
+
 
 def scrap_meanage(season, clubs):
     headers = {
@@ -971,8 +1046,9 @@ for season in seasons:
     goalsagainstbyseason = scrap_goalsagainst(season=season, goalsbyseason=goalsagainstbyseason)
     xgoalsagainstbyseason = scrap_xgoalsagainst(season=season, xg_by_season_club= xgoalsagainstbyseason)
     possession = scrapp_possession_per_team(season=season, clubs=possession)
-    recoveries = scrapp_recoveries_per_team(season= season, clubs=recoveries)
     pointsbyseason = scrap_points(season=season, pointsbyseason=pointsbyseason)
+
+    recoveries = scrapp_recoveries_per_team(season=season, clubs=recoveries)
     cleansheets = scrap_clean_sheets(season=season, pointsbyseason=cleansheets)
     streaks = scrap_streak(season=season, pointsbyseason=streaks)
     meanage = scrap_meanage(season=season, pointsbyseason=meanage)
