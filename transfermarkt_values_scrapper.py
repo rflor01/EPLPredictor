@@ -14,7 +14,6 @@ meanage = defaultdict(lambda: defaultdict(float))
 progressive_passes = defaultdict(lambda: defaultdict(float))
 market_values = defaultdict(lambda: defaultdict(float))
 possession = defaultdict(lambda: defaultdict(float))
-recoveries = defaultdict(lambda: defaultdict(float))
 xgoalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsbyseason = defaultdict(lambda: defaultdict(float))
 goalsagainstbyseason = defaultdict(lambda: defaultdict(float))
@@ -22,6 +21,7 @@ xgoalsagainstbyseason = defaultdict(lambda: defaultdict(float))
 pointsbyseason = defaultdict(lambda: defaultdict(float))
 cleansheets = defaultdict(lambda: defaultdict(float))
 streaks = defaultdict(lambda: defaultdict(float))
+wages = defaultdict(lambda: defaultdict(float))
 results_by_season = {}
 
 team_replacements = {
@@ -49,7 +49,7 @@ team_replacements = {
 
 
 def decode_hex_string(hex_string):
-    return bytes(hex_string, "utf-8").decode("unicode_escape")
+    return hex_string.encode("utf-8").decode("unicode_escape")
 
 
 def scrap_streak(season, pointsbyseason):
@@ -61,57 +61,62 @@ def scrap_streak(season, pointsbyseason):
     last_year_url = url_base + last_year
     response = requests.get(last_year_url, headers=headers)
     soup = BeautifulSoup(response.text, 'html.parser')
+    # Buscar el script que contiene los datos JSON
     script = soup.find('script', string=lambda t: t and 'datesData' in t)
-    json_data = None
+    if not script:
+        print("No se encontró el script con datos JSON.")
+        return None
 
-    if script:
-        json_text = script.string
-        start_index = json_text.index('=') + 14
-        end_index = json_text.rindex(';') - 34
-        json_text = json_text[start_index:end_index].strip()
-        json_text = decode_hex_string(json_text)
-        try:
-            matches = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON: {e}")
+    json_text = script.string
+    try:
+        # Extraer JSON utilizando expresiones regulares
+        match = re.search(r"JSON\.parse\('([^']+)'\)", json_text)
+        if not match:
+            print("No se pudo extraer el JSON.")
             return None
+        json_text = match.group(1)
+        json_text = decode_hex_string(json_text)  # Decodificar caracteres hexadecimales
+        matches = json.loads(json_text)  # Convertir a objeto Python
+    except Exception as e:
+        print(f"Error al procesar el JSON: {e}")
+        return None
 
-        pointsbyseason[season] = {}
+    pointsbyseason[season] = {}
 
-        # Inicializar puntos por equipo
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            if home_team not in pointsbyseason[season]:
-                pointsbyseason[season][home_team] = []
-            if away_team not in pointsbyseason[season]:
-                pointsbyseason[season][away_team] = []
+    # Inicializar puntos por equipo
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        if home_team not in pointsbyseason[season]:
+            pointsbyseason[season][home_team] = []
+        if away_team not in pointsbyseason[season]:
+            pointsbyseason[season][away_team] = []
 
-        # Agregar puntos por partido
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            home_goals = int(match['goals']['h'])
-            away_goals = int(match['goals']['a'])
+    # Agregar puntos por partido
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        home_goals = int(match['goals']['h'])
+        away_goals = int(match['goals']['a'])
 
-            if home_goals > away_goals:
-                home_points = 3
-                away_points = 0
-            elif home_goals < away_goals:
-                home_points = 0
-                away_points = 3
-            else:
-                home_points = 1
-                away_points = 1
+        if home_goals > away_goals:
+            home_points = 3
+            away_points = 0
+        elif home_goals < away_goals:
+            home_points = 0
+            away_points = 3
+        else:
+            home_points = 1
+            away_points = 1
 
-            pointsbyseason[season][home_team].append(home_points)
-            pointsbyseason[season][away_team].append(away_points)
+        pointsbyseason[season][home_team].append(home_points)
+        pointsbyseason[season][away_team].append(away_points)
 
-        # Calcular puntos de los últimos 5 partidos
-        if season in pointsbyseason:
-            for team, points_list in pointsbyseason[season].items():
-                last_5_points = [sum(points_list[max(0, i - 4):i + 1]) for i in range(len(points_list))]
-                pointsbyseason[season][team] = last_5_points
+    # Calcular puntos de los últimos 5 partidos
+    if season in pointsbyseason:
+        for team, points_list in pointsbyseason[season].items():
+            last_5_points = [sum(points_list[max(0, i - 4):i + 1]) for i in range(len(points_list))]
+            pointsbyseason[season][team] = last_5_points
 
     return pointsbyseason
 
@@ -127,60 +132,64 @@ def scrap_points(season, pointsbyseason):
     last_year_url = url_base + last_year
     response = requests.get(last_year_url, headers=headers)
     soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Buscar el script que contiene los datos JSON
     script = soup.find('script', string=lambda t: t and 'datesData' in t)
-    json_data = None
+    if not script:
+        print("No se encontró el script con datos JSON.")
+        return None
 
-    if script:
-        json_text = script.string
-        start_index = json_text.index('=') + 14
-        end_index = json_text.rindex(';') - 34
-        json_text = json_text[start_index:end_index].strip()
-        json_text = decode_hex_string(json_text)
-        try:
-            matches = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON: {e}")
+    json_text = script.string
+    try:
+        # Extraer JSON utilizando expresiones regulares
+        match = re.search(r"JSON\.parse\('([^']+)'\)", json_text)
+        if not match:
+            print("No se pudo extraer el JSON.")
             return None
+        json_text = match.group(1)
+        json_text = decode_hex_string(json_text)  # Decodificar caracteres hexadecimales
+        matches = json.loads(json_text)  # Convertir a objeto Python
+    except Exception as e:
+        print(f"Error al procesar el JSON: {e}")
+        return None
 
-        pointsbyseason[season] = {}
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        if home_team not in pointsbyseason[season]:
+            pointsbyseason[season][home_team] = []
+        if away_team not in pointsbyseason[season]:
+            pointsbyseason[season][away_team] = []
 
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            if home_team not in pointsbyseason[season]:
-                pointsbyseason[season][home_team] = []
-            if away_team not in pointsbyseason[season]:
-                pointsbyseason[season][away_team] = []
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        home_goals = int(match['goals']['h'])
+        away_goals = int(match['goals']['a'])
 
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            home_goals = int(match['goals']['h'])
-            away_goals = int(match['goals']['a'])
+        if home_goals > away_goals:
+            home_points = 3
+            away_points = 0
+        elif home_goals < away_goals:
+            home_points = 0
+            away_points = 3
+        else:
+            home_points = 1
+            away_points = 1
 
-            if home_goals > away_goals:
-                home_points = 3
-                away_points = 0
-            elif home_goals < away_goals:
-                home_points = 0
-                away_points = 3
-            else:
-                home_points = 1
-                away_points = 1
+        pointsbyseason[season][home_team].append(home_points)
+        pointsbyseason[season][away_team].append(away_points)
 
-            pointsbyseason[season][home_team].append(home_points)
-            pointsbyseason[season][away_team].append(away_points)
+    if season in pointsbyseason:
+        for team, points_list in pointsbyseason[season].items():
+            accumulated_points = [0]  # Start with 0
+            total_points = 0
 
-        if season in pointsbyseason:
-            for team, points_list in pointsbyseason[season].items():
-                accumulated_points = [0]  # Start with 0
-                total_points = 0
+            for points in points_list[:-1]:  # Exclude the last value
+                total_points += points
+                accumulated_points.append(total_points)
 
-                for points in points_list[:-1]:  # Exclude the last value
-                    total_points += points
-                    accumulated_points.append(total_points)
-
-                pointsbyseason[season][team] = accumulated_points
+            pointsbyseason[season][team] = accumulated_points
 
     return pointsbyseason
 
@@ -203,7 +212,7 @@ def create_mat_file_with_V(enriched_results_by_season):
     # Inicializar matrices para Design
     design_C = np.array([match[-1] for match in design_results])  # 0, 1, 2 resultados
     design_P = np.array([
-        [match[2], match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
+        [match[2], match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16],match[17], match[18], match[19], match[20], match[21], match[22], match[23], match[24]]
         for match in design_results
     ]).T
 
@@ -212,7 +221,7 @@ def create_mat_file_with_V(enriched_results_by_season):
     Test = {
         'T': np.array([match[-1] for match in test_results]),  # total_goals guardado en match[-1]
         'P': np.array([
-            [match[2],match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16]]
+            [match[2],match[3], match[4], match[5], match[6], match[7], match[8], match[9], match[10], match[11], match[12], match[13], match[14], match[15], match[16],match[17], match[18], match[19], match[20], match[21], match[22], match[23], match[24]]
             for match in test_results
         ]).T
     }
@@ -240,7 +249,7 @@ def create_mat_file(enriched_results_by_season):
     num_matches = len(design_results)
 
     design_C = np.zeros(num_matches)  # Inicializar design_C con ceros
-    design_P = np.zeros((15, num_matches))  # 12 estadísticas por partido
+    design_P = np.zeros((23, num_matches))  # 12 estadísticas por partido
 
     for idx, match in enumerate(design_results):
         # El resultado del partido
@@ -263,6 +272,15 @@ def create_mat_file(enriched_results_by_season):
         design_P[13, idx] = match[15]  # xGoals en contra local
         design_P[14, idx] = match[16]  # xGoals en contra visitante
 
+        design_P[15, idx] = match[17]  # xGoals en contra visitante
+        design_P[16, idx] = match[18]  # xGoals en contra visitante
+        design_P[17, idx] = match[19]  # xGoals en contra visitante
+        design_P[18, idx] = match[20]  # xGoals en contra visitante
+        design_P[19, idx] = match[21]  # xGoals en contra visitante
+        design_P[20, idx] = match[22]  # xGoals en contra visitante
+        design_P[21, idx] = match[23]  # xGoals en contra visitante
+        design_P[22, idx] = match[24]  # xGoals en contra visitante
+
     # Crear las estructuras para MATLAB
     Design = {
         'C': design_C,
@@ -272,7 +290,7 @@ def create_mat_file(enriched_results_by_season):
     # Estructura Test similar a Design, pero solo para la última temporada
     num_test_matches = len(test_results)
     test_C = np.zeros(num_test_matches)
-    test_P = np.zeros((15, num_test_matches))  # 12 estadísticas por partido
+    test_P = np.zeros((23, num_test_matches))  # 12 estadísticas por partido
 
     for idx, match in enumerate(test_results):
         test_C[idx] = match[-2]  # El indicador de resultado (0, 1, 2)
@@ -292,6 +310,15 @@ def create_mat_file(enriched_results_by_season):
         test_P[13, idx] = match[15]  # xGoals en contra local
         test_P[14, idx] = match[16]  # xGoals en contra visitante
 
+        test_P[15, idx] = match[17]  # streak local
+        test_P[16, idx] = match[18]  # streak visitante
+        test_P[17, idx] = match[19]  # clean sheet local
+        test_P[18, idx] = match[20]  # clean sheet vistante
+        test_P[19, idx] = match[21]  # wages local
+        test_P[20, idx] = match[22]  # wages visitante
+        test_P[21, idx] = match[23]  # meanage visitante
+        test_P[22, idx] = match[24]  # meanage visitante
+
     Test = {
         'C': test_C,
         'P': test_P
@@ -304,7 +331,7 @@ def create_mat_file(enriched_results_by_season):
 
 
 
-def enrich_results_with_stats(results_by_season, market_values, possession, goalsbyseason, goalsagainstbyseason, xgoalsbyseason, xgoalsagainstbyseason, pointsbyseason):
+def enrich_results_with_stats(results_by_season, market_values, possession, goalsbyseason, goalsagainstbyseason, xgoalsbyseason, xgoalsagainstbyseason, pointsbyseason, meanage, cleansheets, streaks, wages):
     enriched_results_by_season = {}
 
     for season, matches in results_by_season.items():
@@ -329,7 +356,24 @@ def enrich_results_with_stats(results_by_season, market_values, possession, goal
             except KeyError:
                 team1_possession = 0  # Valor por defecto si no se encuentra
                 team2_possession = 0  # Valor por defecto si no se encuentra
-
+            try:
+                team1_wages = wages[season][team1]
+                team2_wages = wages[season][team2]
+            except KeyError:
+                team1_wages = 0  # Valor por defecto si no se encuentra
+                team2_wages = 0  # Valor por defecto si no se encuentra
+            try:
+                team1_cs = cleansheets[season][team1]
+                team2_cs = cleansheets[season][team2]
+            except KeyError:
+                team1_cs = 0  # Valor por defecto si no se encuentra
+                team2_cs = 0  # Valor por defecto si no se encuentra
+            try:
+                team1_meanage = meanage[season][team1]
+                team2_meanage = meanage[season][team2]
+            except KeyError:
+                team1_meanage = 0  # Valor por defecto si no se encuentra
+                team2_meanage = 0  # Valor por defecto si no se encuentra
             # Obtener goles a favor previo a la jornada en disputa (jornada - 1)
             jornada_index = int(jornada) - 1  # Convertir jornada a índice
             try:
@@ -341,6 +385,14 @@ def enrich_results_with_stats(results_by_season, market_values, possession, goal
             except IndexError:
                 team1_goals = 0  # Valor por defecto si el índice está fuera de rango
                 team2_goals = 0  # Valor por defecto si el índice está fuera de rango
+
+            try:
+                team1_streak = streaks[season][team1][jornada_index]
+                team2_streak = streaks[season][team2][jornada_index]
+            except KeyError:
+                print("ey")
+                team1_streak = 0  # Valor por defecto si no se encuentra
+                team2_streak = 0  # Valor por defecto si no se encuentra
 
             try:
                 team1_xgoalsagainst = xgoalsagainstbyseason[season][team1][jornada_index]
@@ -411,6 +463,14 @@ def enrich_results_with_stats(results_by_season, market_values, possession, goal
                 team2_xgoals,  # Expected goals arsenal
                 team1_xgoalsagainst,  # Expected goals en contra manchester city
                 team2_xgoalsagainst,  # Expected goals en contra arsenal
+                team1_streak,
+                team2_streak,
+                team1_cs,
+                team2_cs,
+                team1_wages,
+                team2_wages,
+                team1_meanage,
+                team2_meanage,
                 result_indicator,  # Indicador de resultado del partido
                 total_goals  # Total de goles marcados en el partido
             ])
@@ -501,6 +561,8 @@ def scra_progressivepasses_per_team(season, clubs):
 
     # Procesa las filas para extraer los equipos y su posesión
     filas = tabla_equipos.find_all("tr")
+    if int(last_year) < 2016:
+        filas = filas[1:]
     for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados %RECOVERIES
         columnas = fila.find_all("td")
         if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
@@ -536,45 +598,11 @@ def scrap_clean_sheets(season, clubs):
     if not tabla_equipos:
         return {}
 
-    # Procesa las filas para extraer los equipos y su posesión
-    filas = tabla_equipos.find_all("tr")
-    for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados %RECOVERIES
-        columnas = fila.find_all("td")
-        if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
-            continue
-
-        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
-        posesion = columnas[15].text.strip()  # La columna de posesión suele ser la tercera
-
-        # Convertir la posesión a float después de limpiar el texto
-        posesion = float(posesion.replace("%", "").strip())
-
-        # Guardar en el diccionario clubs
-        if season not in clubs:
-            clubs[season] = {}
-        clubs[season][nombre_equipo] = posesion
-
-    return clubs
-
-def scrapp_recoveries_per_team(season, clubs):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    last_year = str(int(season.split("/")[0]) + 2000)
-    next_year = str(int(season.split("/")[0]) + 2001)
-    middle = last_year + "-" + next_year
-    url_base = f"https://fbref.com/en/comps/9/{middle}/misc/{middle}-Premier-League-Stats"
-    response = requests.get(url_base, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    # Encuentra la tabla que contiene la información deseada
-    tabla_equipos = soup.find("table", {"class": "stats_table"})
-
-    if not tabla_equipos:
-        return {}
 
     # Procesa las filas para extraer los equipos y su posesión
     filas = tabla_equipos.find_all("tr")
+    if int(last_year) < 2016:
+        filas = filas[1:]
     for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados %RECOVERIES
         columnas = fila.find_all("td")
         if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
@@ -592,6 +620,7 @@ def scrapp_recoveries_per_team(season, clubs):
         clubs[season][nombre_equipo] = posesion
 
     return clubs
+
 
 def scrap_wage(season, clubs):
     headers = {
@@ -612,14 +641,19 @@ def scrap_wage(season, clubs):
 
     # Procesa las filas para extraer los equipos y su posesión
     filas = tabla_equipos.find_all("tr")
+    if int(last_year) < 2016:
+        filas = filas[1:]
     for fila in filas[2:]:  # Salta la primera fila que contiene los encabezados
         columnas = fila.find_all("td")
         if len(columnas) < 3:  # Asegúrate de que hay suficientes columnas
             continue
 
-        nombre_equipo = fila.find("th", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
-        posesion = columnas[1].text.strip()  # La columna de posesión suele ser la tercera
-
+        nombre_equipo = fila.find("td", {"data-stat": "team"}).text.strip()  # Accede al nombre del equipo
+        wage = columnas[2].text.strip()  # La columna de posesión suele ser la tercera
+        match = re.search(r'£\s([\d,]+)', wage)
+        if match:
+            # Quitar las comas del número
+            posesion = match.group(1).replace(',', '')
         # Convertir la posesión a float después de limpiar el texto
         posesion = float(posesion.replace("%", "").strip())
 
@@ -717,55 +751,57 @@ def scrap_xgoalsagainst(season,xg_by_season_club):
     soup = BeautifulSoup(response.text, 'html.parser')
     # Buscar el script que contiene los datos JSON
     script = soup.find('script', string=lambda t: t and 'datesData' in t)
-    json_data = None
+    if not script:
+        print("No se encontró el script con datos JSON.")
+        return None
 
-    if script:
-        # Extraer el contenido JSON
-        json_text = script.string
-        start_index = json_text.index('=') + 14
-        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
-        json_text = json_text[start_index:end_index].strip()  # Limpia el text
-        # Decodificar caracteres de escape hexadecimales
-        json_text = decode_hex_string(json_text)
-        try:
-            matches = json.loads(json_text)  # Convertir a objeto de Python
-        except json.JSONDecodeError as e:
-            print(f"Error al decodificar JSON: {e}")
+    json_text = script.string
+    try:
+        # Extraer JSON utilizando expresiones regulares
+        match = re.search(r"JSON\.parse\('([^']+)'\)", json_text)
+        if not match:
+            print("No se pudo extraer el JSON.")
             return None
+        json_text = match.group(1)
+        json_text = decode_hex_string(json_text)  # Decodificar caracteres hexadecimales
+        matches = json.loads(json_text)  # Convertir a objeto Python
+    except Exception as e:
+        print(f"Error al procesar el JSON: {e}")
+        return None
 
-        xg_by_season_club[season] = {}
+    xg_by_season_club[season] = {}
 
-        # Sumar xG para cada equipo
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            home_xg = float(match['xG']['h'])
-            away_xg = float(match['xG']['a'])
+    # Sumar xG para cada equipo
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        home_xg = float(match['xG']['h'])
+        away_xg = float(match['xG']['a'])
 
-            # Sumar para el equipo local
-            if home_team not in xg_by_season_club[season]:
-                xg_by_season_club[season][home_team] = []
+        # Sumar para el equipo local
+        if home_team not in xg_by_season_club[season]:
+            xg_by_season_club[season][home_team] = []
 
 
-            if away_team not in xg_by_season_club[season]:
-                xg_by_season_club[season][away_team] = []
+        if away_team not in xg_by_season_club[season]:
+            xg_by_season_club[season][away_team] = []
 
-            # Agregar los xG a la lista correspondiente
-            xg_by_season_club[season][home_team].append(away_xg)
-            xg_by_season_club[season][away_team].append(home_xg)
-        # Calcular los xG acumulados
-        if season in xg_by_season_club:
-            for team, xg_list in xg_by_season_club[season].items():
-                # Crear una lista acumulativa
-                accumulated_xg = []
-                total_xg = 0
+        # Agregar los xG a la lista correspondiente
+        xg_by_season_club[season][home_team].append(away_xg)
+        xg_by_season_club[season][away_team].append(home_xg)
+    # Calcular los xG acumulados
+    if season in xg_by_season_club:
+        for team, xg_list in xg_by_season_club[season].items():
+            # Crear una lista acumulativa
+            accumulated_xg = []
+            total_xg = 0
 
-                for xg in xg_list:
-                    total_xg += xg
-                    accumulated_xg.append(total_xg)
+            for xg in xg_list:
+                total_xg += xg
+                accumulated_xg.append(total_xg)
 
-                # Reemplazar la lista original con la lista acumulada
-                xg_by_season_club[season][team] = accumulated_xg
+            # Reemplazar la lista original con la lista acumulada
+            xg_by_season_club[season][team] = accumulated_xg
     return xg_by_season_club
 def scrap_goalsagainst(season,goalsbyseason):
 
@@ -779,55 +815,57 @@ def scrap_goalsagainst(season,goalsbyseason):
     soup = BeautifulSoup(response.text, 'html.parser')
     # Buscar el script que contiene los datos JSON
     script = soup.find('script', string=lambda t: t and 'datesData' in t)
-    json_data = None
+    if not script:
+        print("No se encontró el script con datos JSON.")
+        return None
 
-    if script:
-        # Extraer el contenido JSON
-        json_text = script.string
-        start_index = json_text.index('=') + 14
-        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
-        json_text = json_text[start_index:end_index].strip()  # Limpia el text
-        # Decodificar caracteres de escape hexadecimales
-        json_text = decode_hex_string(json_text)
-        try:
-            matches = json.loads(json_text)  # Convertir a objeto de Python
-        except json.JSONDecodeError as e:
-            print(f"Error al decodificar JSON: {e}")
+    json_text = script.string
+    try:
+        # Extraer JSON utilizando expresiones regulares
+        match = re.search(r"JSON\.parse\('([^']+)'\)", json_text)
+        if not match:
+            print("No se pudo extraer el JSON.")
             return None
+        json_text = match.group(1)
+        json_text = decode_hex_string(json_text)  # Decodificar caracteres hexadecimales
+        matches = json.loads(json_text)  # Convertir a objeto Python
+    except Exception as e:
+        print(f"Error al procesar el JSON: {e}")
+        return None
 
-        goalsbyseason[season] = {}
+    goalsbyseason[season] = {}
 
-        # Sumar xG para cada equipo
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            home_xg = float(match['goals']['h'])
-            away_xg = float(match['goals']['a'])
+    # Sumar xG para cada equipo
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        home_xg = float(match['goals']['h'])
+        away_xg = float(match['goals']['a'])
 
-            # Sumar para el equipo local
-            if home_team not in goalsbyseason[season]:
-                goalsbyseason[season][home_team] = []
+        # Sumar para el equipo local
+        if home_team not in goalsbyseason[season]:
+            goalsbyseason[season][home_team] = []
 
 
-            if away_team not in goalsbyseason[season]:
-                goalsbyseason[season][away_team] = []
+        if away_team not in goalsbyseason[season]:
+            goalsbyseason[season][away_team] = []
 
-            # Agregar los xG a la lista correspondiente
-            goalsbyseason[season][home_team].append(away_xg)
-            goalsbyseason[season][away_team].append(home_xg)
-        # Calcular los xG acumulados
-        if season in goalsbyseason:
-            for team, xg_list in goalsbyseason[season].items():
-                # Crear una lista acumulativa
-                accumulated_xg = []
-                total_xg = 0
+        # Agregar los xG a la lista correspondiente
+        goalsbyseason[season][home_team].append(away_xg)
+        goalsbyseason[season][away_team].append(home_xg)
+    # Calcular los xG acumulados
+    if season in goalsbyseason:
+        for team, xg_list in goalsbyseason[season].items():
+            # Crear una lista acumulativa
+            accumulated_xg = []
+            total_xg = 0
 
-                for xg in xg_list:
-                    total_xg += xg
-                    accumulated_xg.append(total_xg)
+            for xg in xg_list:
+                total_xg += xg
+                accumulated_xg.append(total_xg)
 
-                # Reemplazar la lista original con la lista acumulada
-                goalsbyseason[season][team] = accumulated_xg
+            # Reemplazar la lista original con la lista acumulada
+            goalsbyseason[season][team] = accumulated_xg
     return goalsbyseason
 
 def scrap_goals(season,goalsbyseason):
@@ -842,59 +880,60 @@ def scrap_goals(season,goalsbyseason):
     soup = BeautifulSoup(response.text, 'html.parser')
     # Buscar el script que contiene los datos JSON
     script = soup.find('script', string=lambda t: t and 'datesData' in t)
-    json_data = None
+    if not script:
+        print("No se encontró el script con datos JSON.")
+        return None
 
-    if script:
-        # Extraer el contenido JSON
-        json_text = script.string
-        start_index = json_text.index('=') + 14
-        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
-        json_text = json_text[start_index:end_index].strip()  # Limpia el text
-        # Decodificar caracteres de escape hexadecimales
-        json_text = decode_hex_string(json_text)
-        try:
-            matches = json.loads(json_text)  # Convertir a objeto de Python
-        except json.JSONDecodeError as e:
-            print(f"Error al decodificar JSON: {e}")
+    json_text = script.string
+    try:
+        # Extraer JSON utilizando expresiones regulares
+        match = re.search(r"JSON\.parse\('([^']+)'\)", json_text)
+        if not match:
+            print("No se pudo extraer el JSON.")
             return None
+        json_text = match.group(1)
+        json_text = decode_hex_string(json_text)  # Decodificar caracteres hexadecimales
+        matches = json.loads(json_text)  # Convertir a objeto Python
+    except Exception as e:
+        print(f"Error al procesar el JSON: {e}")
+        return None
 
-        goalsbyseason[season] = {}
+    goalsbyseason[season] = {}
 
-        # Sumar xG para cada equipo
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            home_xg = float(match['goals']['h'])
-            away_xg = float(match['goals']['a'])
+    # Sumar xG para cada equipo
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        home_xg = float(match['goals']['h'])
+        away_xg = float(match['goals']['a'])
 
-            # Sumar para el equipo local
-            if home_team not in goalsbyseason[season]:
-                goalsbyseason[season][home_team] = []
+        # Sumar para el equipo local
+        if home_team not in goalsbyseason[season]:
+            goalsbyseason[season][home_team] = []
 
 
-            if away_team not in goalsbyseason[season]:
-                goalsbyseason[season][away_team] = []
+        if away_team not in goalsbyseason[season]:
+            goalsbyseason[season][away_team] = []
 
-            # Agregar los xG a la lista correspondiente
-            goalsbyseason[season][home_team].append(home_xg)
-            goalsbyseason[season][away_team].append(away_xg)
-        # Calcular los xG acumulados
-        if season in goalsbyseason:
-            for team, xg_list in goalsbyseason[season].items():
-                # Crear una lista acumulativa
-                accumulated_xg = []
-                total_xg = 0
+        # Agregar los xG a la lista correspondiente
+        goalsbyseason[season][home_team].append(home_xg)
+        goalsbyseason[season][away_team].append(away_xg)
+    # Calcular los xG acumulados
+    if season in goalsbyseason:
+        for team, xg_list in goalsbyseason[season].items():
+            # Crear una lista acumulativa
+            accumulated_xg = []
+            total_xg = 0
 
-                for xg in xg_list:
-                    total_xg += xg
-                    accumulated_xg.append(total_xg)
+            for xg in xg_list:
+                total_xg += xg
+                accumulated_xg.append(total_xg)
 
-                # Reemplazar la lista original con la lista acumulada
-                goalsbyseason[season][team] = accumulated_xg
+            # Reemplazar la lista original con la lista acumulada
+            goalsbyseason[season][team] = accumulated_xg
     return goalsbyseason
 
-def scrap_xgoals(season,xg_by_season_club):
-
+def scrap_xgoals(season, xg_by_season_club):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
@@ -903,58 +942,55 @@ def scrap_xgoals(season,xg_by_season_club):
     last_year_url = url_base + last_year
     response = requests.get(last_year_url, headers=headers)
     soup = BeautifulSoup(response.text, 'html.parser')
+
     # Buscar el script que contiene los datos JSON
     script = soup.find('script', string=lambda t: t and 'datesData' in t)
-    json_data = None
+    if not script:
+        print("No se encontró el script con datos JSON.")
+        return None
 
-    if script:
-        # Extraer el contenido JSON
-        json_text = script.string
-        start_index = json_text.index('=') + 14
-        end_index = json_text.rindex(';') - 34  # Busca el último punto y coma
-        json_text = json_text[start_index:end_index].strip()  # Limpia el text
-        # Decodificar caracteres de escape hexadecimales
-        json_text = decode_hex_string(json_text)
-        try:
-            matches = json.loads(json_text)  # Convertir a objeto de Python
-        except json.JSONDecodeError as e:
-            print(f"Error al decodificar JSON: {e}")
+    json_text = script.string
+    try:
+        # Extraer JSON utilizando expresiones regulares
+        match = re.search(r"JSON\.parse\('([^']+)'\)", json_text)
+        if not match:
+            print("No se pudo extraer el JSON.")
             return None
+        json_text = match.group(1)
+        json_text = decode_hex_string(json_text)  # Decodificar caracteres hexadecimales
+        matches = json.loads(json_text)  # Convertir a objeto Python
+    except Exception as e:
+        print(f"Error al procesar el JSON: {e}")
+        return None
 
-        xg_by_season_club[season] = {}
+    xg_by_season_club[season] = {}
 
-        # Sumar xG para cada equipo
-        for match in matches:
-            home_team = match['h']['title']
-            away_team = match['a']['title']
-            home_xg = float(match['xG']['h'])
-            away_xg = float(match['xG']['a'])
+    # Procesar los datos de los partidos
+    for match in matches:
+        home_team = match['h']['title']
+        away_team = match['a']['title']
+        home_xg = float(match['xG']['h'])
+        away_xg = float(match['xG']['a'])
 
-            # Sumar para el equipo local
-            if home_team not in xg_by_season_club[season]:
-                xg_by_season_club[season][home_team] = []
+        # Inicializar listas si no existen
+        xg_by_season_club[season].setdefault(home_team, [])
+        xg_by_season_club[season].setdefault(away_team, [])
 
+        # Agregar los xG a las listas correspondientes
+        xg_by_season_club[season][home_team].append(home_xg)
+        xg_by_season_club[season][away_team].append(away_xg)
 
-            if away_team not in xg_by_season_club[season]:
-                xg_by_season_club[season][away_team] = []
+    # Calcular los xG acumulados
+    for team, xg_list in xg_by_season_club[season].items():
+        accumulated_xg = []
+        total_xg = 0
+        for xg in xg_list:
+            total_xg += xg
+            accumulated_xg.append(total_xg)
+        xg_by_season_club[season][team] = accumulated_xg
 
-            # Agregar los xG a la lista correspondiente
-            xg_by_season_club[season][home_team].append(home_xg)
-            xg_by_season_club[season][away_team].append(away_xg)
-        # Calcular los xG acumulados
-        if season in xg_by_season_club:
-            for team, xg_list in xg_by_season_club[season].items():
-                # Crear una lista acumulativa
-                accumulated_xg = []
-                total_xg = 0
-
-                for xg in xg_list:
-                    total_xg += xg
-                    accumulated_xg.append(total_xg)
-
-                # Reemplazar la lista original con la lista acumulada
-                xg_by_season_club[season][team] = accumulated_xg
     return xg_by_season_club
+
 def scrap_matrix_results(season):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -1047,16 +1083,17 @@ for season in seasons:
     xgoalsagainstbyseason = scrap_xgoalsagainst(season=season, xg_by_season_club= xgoalsagainstbyseason)
     possession = scrapp_possession_per_team(season=season, clubs=possession)
     pointsbyseason = scrap_points(season=season, pointsbyseason=pointsbyseason)
-
-    recoveries = scrapp_recoveries_per_team(season=season, clubs=recoveries)
-    cleansheets = scrap_clean_sheets(season=season, pointsbyseason=cleansheets)
+    wages = scrap_wage(season=season, clubs=wages)
+    cleansheets = scrap_clean_sheets(season=season, clubs=cleansheets)
     streaks = scrap_streak(season=season, pointsbyseason=streaks)
-    meanage = scrap_meanage(season=season, pointsbyseason=meanage)
+    meanage = scrap_meanage(season=season, clubs=meanage)
+
+
 
 #print(results_by_season)
-dictionaries = [market_values, xgoalsbyseason, goalsbyseason, goalsagainstbyseason, xgoalsagainstbyseason, possession, pointsbyseason]
+dictionaries = [market_values, xgoalsbyseason, goalsbyseason, goalsagainstbyseason, xgoalsagainstbyseason, possession, pointsbyseason, cleansheets, streaks, meanage,wages]
 unify_team_keys(dictionaries=dictionaries, seasons=seasons)
 check_unique_teams(dicts_to_clean=dictionaries)
-enriched_results = enrich_results_with_stats(results_by_season=results_by_season,market_values=market_values, possession= possession, goalsbyseason=goalsbyseason, goalsagainstbyseason=goalsagainstbyseason, xgoalsbyseason=xgoalsbyseason, xgoalsagainstbyseason=xgoalsagainstbyseason, pointsbyseason= pointsbyseason)
+enriched_results = enrich_results_with_stats(results_by_season=results_by_season,market_values=market_values, possession= possession, goalsbyseason=goalsbyseason, goalsagainstbyseason=goalsagainstbyseason, xgoalsbyseason=xgoalsbyseason, xgoalsagainstbyseason=xgoalsagainstbyseason, pointsbyseason= pointsbyseason, meanage=meanage, cleansheets=cleansheets, streaks=streaks, wages=wages)
 create_mat_file(enriched_results_by_season=enriched_results)
 create_mat_file_with_V(enriched_results_by_season=enriched_results)
