@@ -295,8 +295,8 @@ def create_mat_file(enriched_results_by_season):
     for idx, match in enumerate(test_results):
         test_C[idx] = match[-2]  # El indicador de resultado (0, 1, 2)
         test_P[0, idx] = match[2]  # Jornada
-        design_P[1, idx] = match[3]  # Puntoslocal
-        design_P[2, idx] = match[4]  # Puntos visitante
+        test_P[1, idx] = match[3]  # Puntoslocal
+        test_P[2, idx] = match[4]  # Puntos visitante
         test_P[3, idx] = match[5]  # Valor del equipo local
         test_P[4, idx] = match[6]  # Valor del equipo visitante
         test_P[5, idx] = match[7]  # Posesión local
